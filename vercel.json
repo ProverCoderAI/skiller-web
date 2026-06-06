@@ -1,0 +1,35 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "bun install",
+  "buildCommand": "bun run build",
+  "outputDirectory": "out/renderer",
+  "functions": {
+    "api/server.ts": {
+      "includeFiles": "out/renderer/**",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "/api/server?__skiller_path=/health"
+    },
+    {
+      "source": "/events",
+      "destination": "/api/server?__skiller_path=/events"
+    },
+    {
+      "source": "/launch",
+      "destination": "/api/server?__skiller_path=/launch"
+    },
+    {
+      "source": "/trpc",
+      "destination": "/api/server?__skiller_path=/trpc"
+    },
+    {
+      "source": "/trpc/:path*",
+      "destination": "/api/server?__skiller_path=/trpc/:path*"
+    }
+  ]
+}

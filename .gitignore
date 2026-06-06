@@ -49,3 +49,4 @@ artifacts
 # OS files
 Thumbs.db
 
+.vercel
