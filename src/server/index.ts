@@ -1,8 +1,9 @@
 import { nodeHTTPRequestHandler } from "@trpc/server/adapters/node-http";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createAppRouter } from "../main/trpc/router";
 import { setPackagedResourcesDir, setPackagedViewsDir } from "../main/paths";
 import { addProject } from "../main/projects";
@@ -77,25 +78,48 @@ initAppUpdater((status) => {
   rpc.send("app_update_status_changed", status);
 });
 
-const server = createServer((request, response) => {
-  void handleRequest(request, response).catch((error: unknown) => {
-    writeText(response, 500, error instanceof Error ? error.message : String(error));
+export function createSkillerServer(): Server {
+  return createServer((request, response) => {
+    void handleSkillerRequest(request, response);
   });
-});
+}
 
-server.listen(port, host, () => {
-  const address = server.address() as AddressInfo | null;
-  const boundPort = address?.port ?? port;
-  console.log(`Skiller web listening on http://${host}:${boundPort}`);
-});
+export function startSkillerServer(): Server {
+  const server = createSkillerServer();
+  server.listen(port, host, () => {
+    const address = server.address() as AddressInfo | null;
+    const boundPort = address?.port ?? port;
+    console.log(`Skiller web listening on http://${host}:${boundPort}`);
+  });
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
-    stopAppUpdater();
-    stopWatcher?.();
-    server.close(() => {
-      process.exit(0);
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      stopAppUpdater();
+      stopWatcher?.();
+      server.close(() => {
+        process.exit(0);
+      });
     });
+  }
+
+  return server;
+}
+
+if (isCliEntrypoint()) {
+  startSkillerServer();
+}
+
+function isCliEntrypoint(): boolean {
+  const entrypoint = process.argv[1];
+  return entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href;
+}
+
+export async function handleSkillerRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  await handleRequest(request, response).catch((error: unknown) => {
+    writeText(response, 500, error instanceof Error ? error.message : String(error));
   });
 }
 
@@ -440,7 +464,7 @@ function injectBootstrap(html: string, bootstrap: string): string {
 }
 
 function scriptJson(value: unknown): string {
-  return JSON.stringify(value).replaceAll("<", "\\u003c");
+  return JSON.stringify(value).replace(/</gu, "\\u003c");
 }
 
 function writeJson(response: ServerResponse, status: number, value: unknown): void {

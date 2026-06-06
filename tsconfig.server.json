@@ -15,6 +15,7 @@
     }
   },
   "include": [
+    "api/**/*.ts",
     "vite.config.ts",
     "src/server/**/*",
     "src/main/**/*",
