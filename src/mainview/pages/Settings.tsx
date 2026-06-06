@@ -11,8 +11,17 @@ import {
   Download,
   RotateCw,
   AlertTriangle,
+  Server,
+  Unplug,
 } from 'lucide-react'
-import { openUrl, invoke, listen } from '@/mainview/lib/native'
+import {
+  DOCKER_GIT_CONNECTION_EVENT,
+  clearDockerGitConnection,
+  dockerGitConnection,
+  invoke,
+  listen,
+  openUrl,
+} from '@/mainview/lib/native'
 import { setTelemetryEnabled } from '@/mainview/lib/telemetry'
 import type {
   AppUpdateStatusJson,
@@ -66,10 +75,23 @@ export default function SettingsPage() {
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatusJson | null>(
     null,
   )
+  const [dockerGitBackendUrl, setDockerGitBackendUrl] = useState<string | null>(
+    () => dockerGitConnection()?.backendUrl ?? null,
+  )
   const [updateBusy, setUpdateBusy] = useState<
     'idle' | 'checking' | 'downloading' | 'applying'
   >('idle')
   const [searchParams] = useSearchParams()
+
+  useEffect(() => {
+    const syncConnection = () => {
+      setDockerGitBackendUrl(dockerGitConnection()?.backendUrl ?? null)
+    }
+    window.addEventListener(DOCKER_GIT_CONNECTION_EVENT, syncConnection)
+    syncConnection()
+    return () =>
+      window.removeEventListener(DOCKER_GIT_CONNECTION_EVENT, syncConnection)
+  }, [])
 
   // Scroll to the section named by `?section=<id>` after mount. Used when the
   // footer sync indicator or SyncBanner deep-links here.
@@ -283,6 +305,33 @@ export default function SettingsPage() {
             {t('sidebar.settings')}
           </h1>
         </header>
+
+        {dockerGitBackendUrl && (
+          <section className="rounded-2xl p-5 glass-panel settings-panel space-y-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="flex items-center gap-1.5 text-sm font-medium">
+                  <Server className="size-4" />
+                  Docker-git backend
+                </h2>
+                <p className="mt-1 break-all text-xs leading-relaxed text-muted-foreground">
+                  {dockerGitBackendUrl}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  clearDockerGitConnection()
+                  setDockerGitBackendUrl(null)
+                }}
+              >
+                <Unplug className="size-3.5" />
+                Disconnect
+              </Button>
+            </div>
+          </section>
+        )}
 
         {/* Theme */}
         <section className="rounded-2xl p-5 glass-panel settings-panel space-y-3">
@@ -831,4 +880,3 @@ export default function SettingsPage() {
     </div>
   )
 }
-

@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { listen, invoke } from '@/mainview/lib/native'
+import {
+  DOCKER_GIT_CONNECTION_EVENT,
+  dockerGitConnection,
+  invoke,
+  listen,
+  shouldRequireDockerGitConnection,
+} from '@/mainview/lib/native'
 import { useTranslation } from 'react-i18next'
 import {
   captureTelemetry,
@@ -15,6 +21,7 @@ import Marketplace from './pages/Marketplace'
 import ProjectsPage from './pages/Projects'
 import SettingsPage from './pages/Settings'
 import OnboardingWizard from './components/OnboardingWizard'
+import DockerGitConnectGate from './components/DockerGitConnectGate'
 import { useTheme } from './hooks/useTheme'
 import CloseConfirmDialog from './components/CloseConfirmDialog'
 import { useToast } from './components/ToastProvider'
@@ -37,6 +44,9 @@ function AppInner() {
   const [telemetryReady, setTelemetryReady] = useState(false)
   const [closeDialogOpen, setCloseDialogOpen] = useState(false)
   const [showGithubStarPrompt, setShowGithubStarPrompt] = useState(false)
+  const [dockerGitConnected, setDockerGitConnected] = useState(() =>
+    dockerGitConnection() !== null,
+  )
   // Onboarding shows on very first launch (or when user explicitly replays it
   // from Settings). Guarded by a localStorage flag — we respect privacy mode
   // by falling back to "not done" if storage throws, which still shows once.
@@ -47,8 +57,26 @@ function AppInner() {
       return true
     }
   })
+  const dockerGitGateActive =
+    shouldRequireDockerGitConnection() && !dockerGitConnected
+  const appRuntimeReady = !dockerGitGateActive
 
   useEffect(() => {
+    const syncConnection = () => {
+      const connected = dockerGitConnection() !== null
+      setDockerGitConnected(connected)
+      if (connected) {
+        void queryClient.invalidateQueries()
+      }
+    }
+    window.addEventListener(DOCKER_GIT_CONNECTION_EVENT, syncConnection)
+    syncConnection()
+    return () =>
+      window.removeEventListener(DOCKER_GIT_CONNECTION_EVENT, syncConnection)
+  }, [queryClient])
+
+  useEffect(() => {
+    if (!appRuntimeReady) return
     let cancelled = false
     void invoke('get_app_version')
       .then((currentVersion) => {
@@ -72,10 +100,10 @@ function AppInner() {
     return () => {
       cancelled = true
     }
-  }, [t, toast])
+  }, [appRuntimeReady, t, toast])
 
   useEffect(() => {
-    if (!telemetryReady || appOpenedTrackedRef.current) return
+    if (!appRuntimeReady || !telemetryReady || appOpenedTrackedRef.current) return
     appOpenedTrackedRef.current = true
     captureTelemetry('app_opened')
     void invoke('get_app_version')
@@ -83,15 +111,15 @@ function AppInner() {
         identifyTelemetry(`desktop:${version}`, { app_version: version })
       })
       .catch(() => {})
-  }, [telemetryReady])
+  }, [appRuntimeReady, telemetryReady])
 
   useEffect(() => {
-    if (!telemetryReady) return
+    if (!appRuntimeReady || !telemetryReady) return
     captureTelemetry('page_view', {
       path: location.pathname,
       search: location.search,
     })
-  }, [location.pathname, location.search, telemetryReady])
+  }, [appRuntimeReady, location.pathname, location.search, telemetryReady])
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -104,6 +132,7 @@ function AppInner() {
 
   // macOS Electrobun: translucent shell when native blur is on (see shell_runtime + macos-window-effects.ts)
   useEffect(() => {
+    if (!appRuntimeReady) return
     if (typeof navigator === 'undefined') return
     const ua = navigator.userAgent
     const isMacDesktop = /Mac/.test(ua) && !/(iPhone|iPad|iPod)/.test(ua)
@@ -121,9 +150,10 @@ function AppInner() {
       .catch(() => {
         applyVibrancyClass(true)
       })
-  }, [])
+  }, [appRuntimeReady])
 
   useEffect(() => {
+    if (!appRuntimeReady) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     void listen('shell_runtime_changed', (e) => {
@@ -142,10 +172,11 @@ function AppInner() {
       cancelled = true
       unlisten?.()
     }
-  }, [])
+  }, [appRuntimeReady])
 
   // Restore the saved language preference from the backend on startup.
   useEffect(() => {
+    if (!appRuntimeReady) return
     invoke('read_settings')
       .then((settings) => {
         const lang = settings.language
@@ -158,10 +189,11 @@ function AppInner() {
       .catch(() => {
         setTelemetryReady(true)
       })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [appRuntimeReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ask for a GitHub star once after meaningful usage cadence.
   useEffect(() => {
+    if (!appRuntimeReady) return
     let cancelled = false
     void invoke('read_settings')
       .then(async (settings) => {
@@ -217,7 +249,7 @@ function AppInner() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [appRuntimeReady])
 
   const handleGithubStarDismiss = () => {
     setShowGithubStarPrompt(false)
@@ -261,12 +293,13 @@ function AppInner() {
   }
 
   useEffect(() => {
-    if (showGithubStarPrompt) {
+    if (appRuntimeReady && showGithubStarPrompt) {
       captureTelemetry('github_star_prompt_shown')
     }
-  }, [showGithubStarPrompt])
+  }, [appRuntimeReady, showGithubStarPrompt])
 
   useEffect(() => {
+    if (!appRuntimeReady) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     void listen('skills_changed', () => {
@@ -284,9 +317,10 @@ function AppInner() {
       cancelled = true
       unlisten?.()
     }
-  }, [queryClient])
+  }, [appRuntimeReady, queryClient])
 
   useEffect(() => {
+    if (!appRuntimeReady) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     void listen('close_requested', () => {
@@ -301,7 +335,18 @@ function AppInner() {
       cancelled = true
       unlisten?.()
     }
-  }, [])
+  }, [appRuntimeReady])
+
+  if (dockerGitGateActive) {
+    return (
+      <DockerGitConnectGate
+        onConnected={() => {
+          setDockerGitConnected(true)
+          void queryClient.invalidateQueries()
+        }}
+      />
+    )
+  }
 
   return (
     <>

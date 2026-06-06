@@ -35,14 +35,14 @@ declare global {
   }
 }
 
-type DockerGitPathRoot = {
+export type DockerGitPathRoot = {
   containerPath: string
   hostPath: string
   id: 'project' | 'home' | 'codexSkills'
   label: string
 }
 
-type DockerGitSkillerScope = {
+export type DockerGitSkillerScope = {
   containerName: string
   currentProject: DockerGitPathRoot
   projectKey: string
@@ -50,11 +50,24 @@ type DockerGitSkillerScope = {
   sessionId: string | null
 }
 
+export type DockerGitConnection = {
+  backendUrl: string
+  browserScope: DockerGitSkillerScope | null
+  eventsBaseUrl: string | null
+  projectKey: string
+  sessionId: string | null
+  trpcBaseUrl: string
+}
+
 type BunRequests = AppRPCSchema['bun']['requests']
 export type BunPushMessage = keyof AppRPCSchema['bun']['messages']
 
 const DEFAULT_TRPC_URL = 'http://127.0.0.1:17888'
 const ELECTRON_PUSH_CHANNEL = 'skiller:push'
+const DOCKER_GIT_SCOPE_STORAGE_KEY = 'skiller.docker_git_scope'
+const DOCKER_GIT_CONNECTION_STORAGE_KEY = 'skiller.docker_git_connection'
+export const DOCKER_GIT_CONNECTION_EVENT =
+  'skiller:docker-git-connection-changed'
 
 /** WKWebView can time out localhost requests around 60s; keep signal long-lived. */
 const TRPC_FETCH_MAX_MS = 600_000
@@ -112,6 +125,28 @@ function parseTrpcPortOverride(): number | null {
   return null
 }
 
+function configuredTrpcUrl(): string | null {
+  const configured = (import.meta as ImportMeta & { env?: { VITE_TRPC_URL?: string } })
+    .env?.VITE_TRPC_URL
+  return configured && configured.length > 0 ? configured : null
+}
+
+export function shouldRequireDockerGitConnection(): boolean {
+  if (typeof window === 'undefined') return false
+  if (isElectronHost() || isBundledSkillerView()) return false
+  if (parseTrpcPortOverride() !== null) return false
+  if (dockerGitConnection() !== null) return false
+  if (window.__SKILLER_TRPC_BASE_URL__) return false
+  return configuredTrpcUrl() === null
+}
+
+export function dockerGitLaunch():
+  | { backendUrl: string | null; projectKey: string | null; sessionId: string | null }
+  | null {
+  if (typeof window === 'undefined') return null
+  return window.__SKILLER_LAUNCH__ ?? null
+}
+
 /** ------------------------------------------------------------------
  * Push transport: normalizes Electrobun duplex RPC and Electron IPC
  * into a single EventTarget that exposes `addListener(name, handler)`.
@@ -123,6 +158,7 @@ const g = globalThis as typeof globalThis & {
   __skillerPushHub?: Map<string, Set<PushListener>>
   __skillerPushBooted?: boolean
   __skillerLaunchBooted?: boolean
+  __skillerPushSource?: EventSource | null
 }
 
 function getHub(): Map<string, Set<PushListener>> {
@@ -163,19 +199,31 @@ async function bootPushTransport(): Promise<void> {
       console.debug('[native] EventSource unavailable — push transport disabled')
       return
     }
-    const source = new EventSource(`${trpcBaseUrl()}/events`)
-    source.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data) as { name?: string; payload?: unknown }
-        if (!msg || typeof msg.name !== 'string') return
-        dispatchPush(msg.name, msg.payload)
-      } catch (err) {
-        console.warn('[native] invalid SSE payload:', err)
+    const openSource = () => {
+      g.__skillerPushSource?.close()
+      g.__skillerPushSource = null
+      const connection = dockerGitConnection()
+      const eventsUrl =
+        connection?.eventsBaseUrl ??
+        (shouldRequireDockerGitConnection() ? null : `${trpcBaseUrl()}/events`)
+      if (eventsUrl === null) return
+      const source = new EventSource(eventsUrl)
+      g.__skillerPushSource = source
+      source.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as { name?: string; payload?: unknown }
+          if (!msg || typeof msg.name !== 'string') return
+          dispatchPush(msg.name, msg.payload)
+        } catch (err) {
+          console.warn('[native] invalid SSE payload:', err)
+        }
+      }
+      source.onerror = () => {
+        console.debug('[native] SSE push transport disconnected')
       }
     }
-    source.onerror = () => {
-      console.debug('[native] SSE push transport disconnected')
-    }
+    window.addEventListener(DOCKER_GIT_CONNECTION_EVENT, openSource)
+    openSource()
     return
   }
 
@@ -195,8 +243,9 @@ async function bootPushTransport(): Promise<void> {
 // Fire-and-forget — any `listen()` call races with this; missed events during
 // boot are extremely unlikely in practice because main waits for renderer to
 // signal ready before sending, but we queue nothing explicitly.
-void bootPushTransport()
-void bootDockerGitLaunchContext()
+void bootDockerGitLaunchContext().finally(() => {
+  void bootPushTransport()
+})
 
 /** ------------------------------------------------------------------
  * tRPC base URL resolution + request helper.
@@ -207,14 +256,17 @@ function trpcBaseUrl(): string {
   if (override !== null) {
     return `http://127.0.0.1:${override}`
   }
+  const connection = dockerGitConnection()
+  if (connection !== null) {
+    return connection.trpcBaseUrl
+  }
   if (typeof window !== 'undefined' && window.__SKILLER_TRPC_BASE_URL__) {
     return window.__SKILLER_TRPC_BASE_URL__
   }
   if (isBundledSkillerView()) {
     return DEFAULT_TRPC_URL
   }
-  const configured = (import.meta as ImportMeta & { env?: { VITE_TRPC_URL?: string } }).env
-    ?.VITE_TRPC_URL
+  const configured = configuredTrpcUrl()
   if (configured && configured.length > 0) return configured
   if (typeof window !== 'undefined' && window.location.origin !== 'null') {
     return window.location.origin
@@ -238,7 +290,7 @@ function decodeBase64UrlJson(raw: string): unknown {
   return JSON.parse(new TextDecoder().decode(bytes)) as unknown
 }
 
-function isDockerGitPathRoot(value: unknown): value is DockerGitPathRoot {
+export function isDockerGitPathRoot(value: unknown): value is DockerGitPathRoot {
   if (!value || typeof value !== 'object') return false
   const root = value as Partial<DockerGitPathRoot>
   return (
@@ -249,7 +301,9 @@ function isDockerGitPathRoot(value: unknown): value is DockerGitPathRoot {
   )
 }
 
-function isDockerGitSkillerScope(value: unknown): value is DockerGitSkillerScope {
+export function isDockerGitSkillerScope(
+  value: unknown,
+): value is DockerGitSkillerScope {
   if (!value || typeof value !== 'object') return false
   const scope = value as Partial<DockerGitSkillerScope>
   return (
@@ -262,11 +316,41 @@ function isDockerGitSkillerScope(value: unknown): value is DockerGitSkillerScope
   )
 }
 
+function isDockerGitConnection(value: unknown): value is DockerGitConnection {
+  if (!value || typeof value !== 'object') return false
+  const connection = value as Partial<DockerGitConnection>
+  return (
+    typeof connection.backendUrl === 'string' &&
+    (connection.browserScope === null ||
+      isDockerGitSkillerScope(connection.browserScope)) &&
+    (connection.eventsBaseUrl === null ||
+      typeof connection.eventsBaseUrl === 'string') &&
+    typeof connection.projectKey === 'string' &&
+    (connection.sessionId === null || typeof connection.sessionId === 'string') &&
+    typeof connection.trpcBaseUrl === 'string'
+  )
+}
+
+function dispatchDockerGitConnectionChanged(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(DOCKER_GIT_CONNECTION_EVENT))
+}
+
 function storeDockerGitScope(scope: DockerGitSkillerScope): void {
   if (typeof window === 'undefined') return
   window.__DOCKER_GIT_SKILLER_SCOPE__ = scope
   try {
-    window.sessionStorage.setItem('skiller.docker_git_scope', JSON.stringify(scope))
+    window.sessionStorage.setItem(DOCKER_GIT_SCOPE_STORAGE_KEY, JSON.stringify(scope))
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function clearDockerGitScope(): void {
+  if (typeof window === 'undefined') return
+  window.__DOCKER_GIT_SKILLER_SCOPE__ = null
+  try {
+    window.sessionStorage.removeItem(DOCKER_GIT_SCOPE_STORAGE_KEY)
   } catch {
     /* ignore storage failures */
   }
@@ -275,7 +359,7 @@ function storeDockerGitScope(scope: DockerGitSkillerScope): void {
 function restoreDockerGitScope(): void {
   if (typeof window === 'undefined' || window.__DOCKER_GIT_SKILLER_SCOPE__) return
   try {
-    const raw = window.sessionStorage.getItem('skiller.docker_git_scope')
+    const raw = window.sessionStorage.getItem(DOCKER_GIT_SCOPE_STORAGE_KEY)
     if (!raw) return
     const parsed = JSON.parse(raw) as unknown
     if (isDockerGitSkillerScope(parsed)) {
@@ -284,6 +368,66 @@ function restoreDockerGitScope(): void {
   } catch {
     /* ignore invalid saved scope */
   }
+}
+
+function applyDockerGitConnection(connection: DockerGitConnection): void {
+  if (typeof window === 'undefined') return
+  window.__DOCKER_GIT_API_URL__ = connection.backendUrl
+  window.__SKILLER_TRPC_BASE_URL__ = connection.trpcBaseUrl
+  window.__SKILLER_LAUNCH__ = {
+    backendUrl: connection.backendUrl,
+    projectKey: connection.projectKey,
+    sessionId: connection.sessionId,
+  }
+  if (connection.browserScope !== null) {
+    storeDockerGitScope(connection.browserScope)
+  }
+}
+
+export function dockerGitConnection(): DockerGitConnection | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(DOCKER_GIT_CONNECTION_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as unknown
+    if (!isDockerGitConnection(parsed)) return null
+    applyDockerGitConnection(parsed)
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+export function saveDockerGitConnection(connection: DockerGitConnection): void {
+  if (typeof window === 'undefined') return
+  applyDockerGitConnection(connection)
+  try {
+    window.sessionStorage.setItem(
+      DOCKER_GIT_CONNECTION_STORAGE_KEY,
+      JSON.stringify(connection),
+    )
+  } catch {
+    /* ignore storage failures */
+  }
+  dispatchDockerGitConnectionChanged()
+}
+
+export function clearDockerGitConnection(): void {
+  if (typeof window === 'undefined') return
+  clearDockerGitScope()
+  window.__DOCKER_GIT_API_URL__ = null
+  window.__SKILLER_LAUNCH__ = {
+    backendUrl: null,
+    projectKey: null,
+    sessionId: null,
+  }
+  delete window.__SKILLER_TRPC_BASE_URL__
+  try {
+    window.sessionStorage.removeItem(DOCKER_GIT_CONNECTION_STORAGE_KEY)
+  } catch {
+    /* ignore storage failures */
+  }
+  dispatchDockerGitConnectionChanged()
 }
 
 async function fetchDockerGitScope(
@@ -314,6 +458,7 @@ async function fetchDockerGitScope(
 async function bootDockerGitLaunchContext(): Promise<void> {
   if (g.__skillerLaunchBooted) return
   g.__skillerLaunchBooted = true
+  dockerGitConnection()
   restoreDockerGitScope()
 
   const params = launchSearchParams()
