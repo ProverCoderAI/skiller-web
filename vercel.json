@@ -5,8 +5,8 @@
   "buildCommand": "bun run build",
   "outputDirectory": "out/renderer",
   "functions": {
-    "api/server.ts": {
-      "includeFiles": "out/renderer/**",
+    "api/server.js": {
+      "includeFiles": "out/**",
       "maxDuration": 60
     }
   },
