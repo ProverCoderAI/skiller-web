@@ -1,8 +1,6 @@
 /**
- * Platform adapter — lets tRPC handlers call out to the host (Electrobun or
- * Electron) without knowing which one is running. Kept in `src/shared/` so
- * both implementations (`src/bun/platform-electrobun.ts` and
- * `src/electron-main/platform-electron.ts`) depend only on this file.
+ * Platform adapter — lets tRPC handlers call out to the host without knowing
+ * whether Skiller is running under a desktop shell or the web service.
  */
 
 export interface FileDialogOpts {

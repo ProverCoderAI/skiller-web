@@ -2,11 +2,9 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Packaged-bundle root where the host (Electrobun or Electron) copies
- * `agents/` and `templates/`. Must be set at startup by whichever host is
- * running (see `src/bun/index.ts` and `src/electron-main/index.ts`). If left
- * unset, `getAgentsDir` / `getTemplatesDir` fall back to the repo layout so
- * `bun run dev:vite` / `electron-vite dev` keep working.
+ * Packaged-bundle root where the active host serves `agents/` and templates.
+ * If left unset, `getAgentsDir` / `getTemplatesDir` fall back to the repo
+ * layout so local web development keeps working.
  */
 let packagedResourcesDir: string | null = null;
 let packagedViewsDir: string | null = null;

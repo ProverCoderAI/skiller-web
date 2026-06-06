@@ -24,6 +24,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
-  "exclude": ["src/electron-main", "src/preload", "**/*.test.ts", "**/*.test.tsx"]
+  "include": ["src/mainview/**/*", "src/shared/**/*", "src/vite-env.d.ts"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
 }

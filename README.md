@@ -2,7 +2,7 @@
 
 ![Skiller Hero Banner](docs/images/screenshots/hero.png)
 
-Install, sync, and manage skills with Skiller across your coding agents from one desktop app.
+Install, sync, and manage skills with Skiller across your coding agents from a local web service.
 
 ## Why Skiller
 
@@ -80,34 +80,27 @@ Search `skills.sh` and `ClawHub` in-app, preview a skill's target agents and rep
 
 ### Settings
 
-Theme, accent color, window blur, language, close behavior, and cache controls — all in one place.
+Theme, accent color, language, and cache controls — all in one place.
 
 ![Settings](docs/images/screenshots/settings.png)
 
-## Installation
+## Running
 
-Grab the installer for your OS from the [**latest release**](https://github.com/beautyfree/skiller-skills-desktop-manager/releases/latest):
+Skiller Web binds to `127.0.0.1:17888` by default because it can read and write local skill/project paths.
 
-| OS | File | Notes |
-| --- | --- | --- |
-| macOS (Apple Silicon) | `Skiller-<version>-macos-arm64.dmg` | Signed + notarized. Open the DMG and drag Skiller to Applications. |
-| macOS (Intel) | `Skiller-<version>-macos-x64.dmg` | Signed + notarized. Same flow as the Apple Silicon build. |
-| Windows (x64) | `Skiller-<version>-win-x64.exe` | NSIS installer. SmartScreen may show a one-time warning — click "More info" → "Run anyway". |
-| Linux (x64) | `Skiller-<version>-linux-x86_64.AppImage`, `.deb`, or `.tar.xz` | AppImage: `chmod +x`, run — static squashfuse runtime, no `libfuse2` required (works on CachyOS/Manjaro/EndeavourOS out of the box). `.deb` for Ubuntu/Debian. `.tar.xz`: extract, `cd Skiller-*`, run `./install.sh` once (sets SUID on `chrome-sandbox`, registers a `.desktop` entry). Passing `--uninstall` to the same script removes the menu entry. |
+```bash
+bun install
+bun run dev
+```
 
-Every release is built and published by the CI matrix in `.github/workflows/release.yml` — tagging `vX.Y.Z` produces all three platforms automatically.
+Production-style build:
 
-> **If you had an older `stable-*-Skiller.*` build:** those were produced by a previous Electrobun-based packaging pipeline and can't auto-update to the current Electron-based builds. Grab the new installer above; your local data in `~/Library/Application Support/com.beautyfree.skiller/` (or the Windows/Linux equivalent) stays intact.
+```bash
+bun run build
+bun run start
+```
 
-## Auto-updates
-
-Once installed, Skiller keeps itself current:
-
-- Checks for new versions on launch, then every 6 hours in the background.
-- Downloads the full updated bundle on demand (click **Download update** in Settings → App Updates).
-- Shows status and a one-click **Restart & install** button once ready.
-
-Powered by [`electron-updater`](https://www.electron.build/auto-update) reading from this repo's GitHub Releases.
+The docker-git entrypoint is `/launch?backendUrl=<docker-git-api-url>&projectKey=<key>&sessionId=<optional>`.
 
 ## For Developers
 
