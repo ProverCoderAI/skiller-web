@@ -46,20 +46,10 @@ const TITLE_BAR_DRAG_HEIGHT = 36
 /**
  * Drag band used as the window-move surface above the sidebar + canvas.
  *
- * Uses a host-agnostic class (`app-drag` — see index.css) that works under
- * Electron via the standard `-webkit-app-region: drag` CSS property. The
- * legacy Electrobun class (`electrobun-webkit-app-region-drag`) is kept in
- * parallel so the band also registers as draggable under the old WKWebView
- * build until Phase 5 removes it.
- *
- * On Windows + Linux the band coexists with Electron's native caption-button
- * overlay (configured in src/electron-main/index.ts). The overlay occupies
- * ~135px on the right; `env(titlebar-area-*)` can be consulted by children
- * that need to avoid overlapping the buttons, but the base drag surface is
- * fine as a full-width band because the buttons paint on top with their own
- * hit regions.
+ * Kept as a fixed top spacer for visual parity with the original desktop UI.
+ * In the web service it is not a native window drag surface.
  */
-const DRAG_CLASSES = 'app-drag electrobun-webkit-app-region-drag'
+const DRAG_CLASSES = 'app-drag'
 
 type LayoutProps = {
   showGithubStarPrompt?: boolean

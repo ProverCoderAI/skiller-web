@@ -20,9 +20,8 @@ export interface AgentConfig {
 type OS = "windows" | "linux" | "macos";
 
 function detectOS(): OS {
-  // window.api.platform comes from the Electron preload bridge. Fall back to
-  // userAgent sniffing for plain-Vite dev (`vite dev` without the Electron
-  // shell) so the install buttons still resolve to something sensible.
+  // Desktop hosts may expose window.api.platform. The web service falls back
+  // to userAgent sniffing so install buttons still resolve to something useful.
   const native = (globalThis as { api?: { platform?: string } }).api?.platform;
   if (native === "win32") return "windows";
   if (native === "linux") return "linux";

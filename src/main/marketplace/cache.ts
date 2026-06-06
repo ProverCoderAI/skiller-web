@@ -5,13 +5,11 @@ import Database from "better-sqlite3";
 import type { MarketplaceSkill } from "../marketplace-types";
 
 /**
- * Marketplace HTTP cache. Moved from `bun:sqlite` to `better-sqlite3` so the
- * module runs under both Bun (legacy Electrobun build) and Node (Electron
- * main process). API surface (`readCache`, `writeCache`, etc.) is unchanged.
+ * Marketplace HTTP cache. Uses `better-sqlite3` so the module runs under the
+ * web server without depending on Bun-only sqlite APIs. API surface
+ * (`readCache`, `writeCache`, etc.) is unchanged.
  *
- * `better-sqlite3` is a native addon; electron-builder rebuilds it against the
- * Electron ABI on packaging via `@electron/rebuild`, and the `.node` file is
- * `asarUnpack`-ed — see Phase 5 notes in docs/DEVELOPMENT.md.
+ * `better-sqlite3` is a native addon; keep it external in server bundles.
  */
 
 function appCacheDir(): string {

@@ -6,7 +6,7 @@
     "allowSyntheticDefaultImports": true,
     "target": "ES2022",
     "lib": ["ES2022", "DOM"],
-    "types": ["node", "electron"],
+    "types": ["node"],
     "strict": true,
     "noEmit": true,
     "baseUrl": ".",
@@ -15,9 +15,8 @@
     }
   },
   "include": [
-    "electron.vite.config.ts",
-    "src/electron-main/**/*",
-    "src/preload/**/*",
+    "vite.config.ts",
+    "src/server/**/*",
     "src/main/**/*",
     "src/shared/**/*"
   ],
