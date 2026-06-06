@@ -1,6 +1,11 @@
 import { isTrpcQueryProcedure } from '@/shared/trpc-query-procedures'
 import type { AppRPCSchema } from '@/shared/rpc-schema'
 import { captureTelemetry } from '@/mainview/lib/telemetry'
+import {
+  dockerGitLaunchFromParams,
+  dockerGitLaunchSearchParamsFromLocation,
+  type DockerGitLaunchParams,
+} from '@/mainview/lib/docker-git-launch-params'
 
 /**
  * Renderer-side glue to the Skiller service.
@@ -16,11 +21,7 @@ declare global {
     __DOCKER_GIT_SKILLER_SCOPE__?: DockerGitSkillerScope | null
     /** Set by /launch for diagnostics and future docker-git API calls. */
     __DOCKER_GIT_API_URL__?: string | null
-    __SKILLER_LAUNCH__?: {
-      backendUrl: string | null
-      projectKey: string | null
-      sessionId: string | null
-    }
+    __SKILLER_LAUNCH__?: DockerGitLaunchParams
     /** Set by the main process (either host) when tRPC binds a port. */
     __SKILLER_TRPC_BASE_URL__?: string
     /** Electron preload-exposed bridge. Absent under Electrobun or plain Vite. */
@@ -140,11 +141,9 @@ export function shouldRequireDockerGitConnection(): boolean {
   return configuredTrpcUrl() === null
 }
 
-export function dockerGitLaunch():
-  | { backendUrl: string | null; projectKey: string | null; sessionId: string | null }
-  | null {
+export function dockerGitLaunch(): DockerGitLaunchParams | null {
   if (typeof window === 'undefined') return null
-  return window.__SKILLER_LAUNCH__ ?? null
+  return window.__SKILLER_LAUNCH__ ?? launchFromCurrentLocation()
 }
 
 /** ------------------------------------------------------------------
@@ -276,11 +275,15 @@ function trpcBaseUrl(): string {
 
 function launchSearchParams(): URLSearchParams | null {
   if (typeof window === 'undefined') return null
-  const params = new URLSearchParams(window.location.search)
-  if (params.size > 0) return params
-  const queryIndex = window.location.hash.indexOf('?')
-  if (queryIndex < 0) return null
-  return new URLSearchParams(window.location.hash.slice(queryIndex + 1))
+  return dockerGitLaunchSearchParamsFromLocation(
+    window.location.search,
+    window.location.hash,
+  )
+}
+
+function launchFromCurrentLocation(): DockerGitLaunchParams | null {
+  const params = launchSearchParams()
+  return params === null ? null : dockerGitLaunchFromParams(params)
 }
 
 function decodeBase64UrlJson(raw: string): unknown {
@@ -464,11 +467,10 @@ async function bootDockerGitLaunchContext(): Promise<void> {
   const params = launchSearchParams()
   if (!params) return
 
-  const backendUrl = params.get('backendUrl')
-  const projectKey = params.get('projectKey')
-  const sessionId = params.get('sessionId')
+  const launch = dockerGitLaunchFromParams(params)
+  const { backendUrl, projectKey, sessionId } = launch
   window.__DOCKER_GIT_API_URL__ = backendUrl
-  window.__SKILLER_LAUNCH__ = { backendUrl, projectKey, sessionId }
+  window.__SKILLER_LAUNCH__ = launch
 
   const inlineScope = params.get('scope')
   if (inlineScope) {
