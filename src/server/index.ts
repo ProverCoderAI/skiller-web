@@ -6,31 +6,10 @@ import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createAppRouter } from "../main/trpc/router";
 import { setPackagedResourcesDir, setPackagedViewsDir } from "../main/paths";
-import { addProject } from "../main/projects";
 import type { BunSideRpc } from "../main/rpc-handlers";
 import { initAppUpdater, stopAppUpdater } from "../main/app-updater";
 import { startSkillWatcher } from "../main/watcher";
 import { createWebPlatform } from "./platform-web";
-
-type DockerGitPathRoot = {
-  readonly containerPath: string;
-  readonly hostPath: string;
-  readonly id: "project" | "home" | "codexSkills";
-  readonly label: string;
-};
-
-type DockerGitBrowserScope = {
-  readonly containerName: string;
-  readonly currentProject: DockerGitPathRoot;
-  readonly projectKey: string;
-  readonly roots: ReadonlyArray<DockerGitPathRoot>;
-  readonly sessionId: string | null;
-};
-
-type DockerGitLaunchContext = {
-  readonly browserScope: DockerGitBrowserScope | null;
-  readonly hostProjectPath: string | null;
-};
 
 type PushEnvelope = {
   readonly name: string;
@@ -242,7 +221,7 @@ function allowedOriginSet(): Set<string> {
 }
 
 async function serveLaunch(url: URL, response: ServerResponse): Promise<void> {
-  const context = await loadDockerGitLaunchContext(url);
+  const context = loadDockerGitLaunchContext(url);
   const bootstrap = [
     "<script>",
     `window.__DOCKER_GIT_API_URL__=${scriptJson(context.backendUrl)};`,
@@ -253,33 +232,21 @@ async function serveLaunch(url: URL, response: ServerResponse): Promise<void> {
   serveStatic("/", response, bootstrap);
 }
 
-async function loadDockerGitLaunchContext(url: URL): Promise<{
+function loadDockerGitLaunchContext(url: URL): {
   readonly backendUrl: string | null;
-  readonly browserScope: DockerGitBrowserScope | null;
+  readonly browserScope: null;
   readonly launch: {
     readonly backendUrl: string | null;
     readonly projectKey: string | null;
     readonly sessionId: string | null;
   };
-}> {
+} {
   const backendUrl = resolveDockerGitBackendUrl(url.searchParams.get("backendUrl"));
   const projectKey = nonEmpty(url.searchParams.get("projectKey"));
   const sessionId = nonEmpty(url.searchParams.get("sessionId"));
   const launch = { backendUrl, projectKey, sessionId };
 
-  if (backendUrl === null || projectKey === null) {
-    return { backendUrl, browserScope: null, launch };
-  }
-
-  const context = await fetchDockerGitContext(backendUrl, projectKey, sessionId);
-  if (context.hostProjectPath !== null) {
-    try {
-      addProject(context.hostProjectPath);
-    } catch (error) {
-      console.warn("[docker-git] failed to register launch project:", error);
-    }
-  }
-  return { backendUrl, browserScope: context.browserScope, launch };
+  return { backendUrl, browserScope: null, launch };
 }
 
 function nonEmpty(value: string | null): string | null {
@@ -291,115 +258,20 @@ function resolveDockerGitBackendUrl(raw: string | null): string | null {
   const candidate = nonEmpty(raw) ?? nonEmpty(env.DOCKER_GIT_API_URL ?? null);
   if (candidate === null) return null;
   const parsed = new URL(candidate);
-  const origin = parsed.origin;
-  if (isDockerGitOriginAllowed(parsed)) {
-    parsed.hash = "";
-    parsed.search = "";
-    return trimTrailingSlashes(parsed.toString());
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("docker-git backend URL must use http or https");
   }
-  throw new Error(`docker-git backend origin is not allowed: ${origin}`);
+  parsed.hash = "";
+  parsed.search = "";
+  return trimTrailingSlashes(parsed.toString());
 }
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/u, "");
 }
 
-function isDockerGitOriginAllowed(url: URL): boolean {
-  if (isLocalHostName(url.hostname)) return true;
-  const configuredDefault = nonEmpty(env.DOCKER_GIT_API_URL ?? null);
-  if (configuredDefault !== null && new URL(configuredDefault).origin === url.origin) {
-    return true;
-  }
-  return allowedDockerGitOriginSet().has(url.origin);
-}
-
-function allowedDockerGitOriginSet(): Set<string> {
-  return new Set(
-    (env.SKILLER_ALLOWED_DOCKER_GIT_ORIGINS ?? "")
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0),
-  );
-}
-
 function isLocalHostName(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-}
-
-async function fetchDockerGitContext(
-  backendUrl: string,
-  projectKey: string,
-  sessionId: string | null,
-): Promise<DockerGitLaunchContext> {
-  const path = sessionId === null
-    ? `/projects/by-key/${encodeURIComponent(projectKey)}/skiller/context`
-    : `/projects/by-key/${encodeURIComponent(projectKey)}/terminal-sessions/${encodeURIComponent(sessionId)}/skiller/context`;
-  const contextUrl = new URL(`${trimTrailingSlashes(backendUrl)}${path}`);
-  const response = await fetch(contextUrl);
-  if (!response.ok) {
-    throw new Error(`docker-git context failed with HTTP ${response.status}: ${await response.text()}`);
-  }
-  return decodeDockerGitContext(await response.json());
-}
-
-function decodeDockerGitContext(value: unknown): DockerGitLaunchContext {
-  if (typeof value !== "object" || value === null) {
-    return { browserScope: null, hostProjectPath: null };
-  }
-  const record = value as Record<string, unknown>;
-  const browserScope = decodeBrowserScope(record.browserScope);
-  const scope = typeof record.scope === "object" && record.scope !== null
-    ? record.scope as Record<string, unknown>
-    : null;
-  const hostProjectPath = typeof scope?.hostProjectPath === "string" ? scope.hostProjectPath : null;
-  return { browserScope, hostProjectPath };
-}
-
-function decodeBrowserScope(value: unknown): DockerGitBrowserScope | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const roots = Array.isArray(record.roots)
-    ? record.roots.flatMap((root) => {
-        const decoded = decodePathRoot(root);
-        return decoded === null ? [] : [decoded];
-      })
-    : [];
-  const currentProject = decodePathRoot(record.currentProject);
-  if (
-    typeof record.containerName !== "string" ||
-    typeof record.projectKey !== "string" ||
-    currentProject === null ||
-    roots.length === 0
-  ) {
-    return null;
-  }
-  return {
-    containerName: record.containerName,
-    currentProject,
-    projectKey: record.projectKey,
-    roots,
-    sessionId: typeof record.sessionId === "string" ? record.sessionId : null,
-  };
-}
-
-function decodePathRoot(value: unknown): DockerGitPathRoot | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const id = record.id;
-  if (
-    typeof record.containerPath !== "string" ||
-    typeof record.hostPath !== "string" ||
-    typeof record.label !== "string" ||
-    (id !== "project" && id !== "home" && id !== "codexSkills")
-  ) {
-    return null;
-  }
-  return {
-    containerPath: record.containerPath,
-    hostPath: record.hostPath,
-    id,
-    label: record.label,
-  };
 }
 
 function serveStatic(pathname: string, response: ServerResponse, bootstrap: string): void {
